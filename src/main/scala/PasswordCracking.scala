@@ -21,29 +21,23 @@ import scala.concurrent.ExecutionContext.Implicits.global  // Ina: Future wants 
   val fullCharset = lowercase + uppercase + digits + symbols
 
 
-  var length = 3
+  var length = 4
 
   // bruteCollection
-  var timeItResult: (Double, Iterable[String]) = timeIt(bruteForceCollection(fullCharset, length, hashes))
-  var seconds: Double = timeItResult(0) / 1000
-  var passwords: Iterable[String] = timeItResult(1)
-  println(s"bruteCollection: Found ${passwords.size} passwords of length $length in $seconds seconds! ")
+//  var timeItResult = timeIt(bruteForceCollection(fullCharset, length, hashes))
+//  var seconds: Double = timeItResult(0) / 1000
+//  var passwords: Iterable[String] = timeItResult(1)
+//  println(s"bruteCollection: Found ${passwords.size} passwords of length $length in $seconds seconds! ")
 
 //  // bruteLoop
 //  timeItResult = timeIt(bruteForceLoop(fullCharset, length, hashes))
 //  println(s"bruteLoop: Found ${timeItResult(1).size} passwords of length $length in ${timeItResult(0) / 1000} seconds! ")
 
-  // bruteFutureCollection
-  timeItResult = timeIt(bruteForceFutureCollection(fullCharset, length, hashes))
-  seconds = timeItResult(0) / 1000
-  passwords = timeItResult(1)
-  println(s"futureCollection: Found ${passwords.size} passwords of length $length in $seconds seconds! ")
-
   // bruteFutureLoop
-  var timeItResultWithUnit = timeIt(bruteForceFutureLoop(fullCharset, length, hashes))
-  seconds = timeItResultWithUnit(0) / 1000
-  var numPasswords: BigInt = timeItResultWithUnit(1)
-  println(s"futureLoop: Found ${numPasswords} passwords of length $length in $seconds seconds! ")
+  var timeItResultWithInt = timeIt(bruteForceFutureLoop(fullCharset, length, hashes))
+  var seconds = timeItResultWithInt(0) / 1000
+  var numPasswords = timeItResultWithInt(1)
+  println(s"futureLoop: Found $numPasswords passwords of length $length in $seconds seconds! ")
 
 
 //  // try brute forcing all passwords of a specific length n
@@ -55,55 +49,64 @@ import scala.concurrent.ExecutionContext.Implicits.global  // Ina: Future wants 
 //  println(getCombination(words)(2)(BigInt(7)).mkString)
 }
 
-def bruteForceFutureCollection(charset: String, length: Int, hashes: Set[String]): Iterable[String] = {
-  // identify the range of BigInt that correspond to possible passwords
+// TODO: Test with fullCharset, justNumerics, justLowercaseLetters, and justLetters
+def bruteForceFutureLoop(charset: String, length: Int, hashes: Set[String]): Int = {
   val start = BigInt(0)
   val stop = BigInt(charset.length).pow(length)
-  // partially apply getCombination to get a simpler function
   val makeCombination = getCombination(charset)(length)
-  // use collection methods on a range of BigInts to find possible passwords and filter for ones with matching hashes
-  (start until stop).view
-      .map((x: BigInt) => Future(makeCombination(x).mkString))
-      .map((fComb: Future[String]) => Await.result(fComb, Duration.Inf))  // just trying to fit Future in somewhere...
-      .filter((pwd: String) => hashes contains sha256(pwd))
+
+  // Let the number of Futures be the number of cores on your computer's CPU
+  // Dr. Dickinson said you generally want it that way so the threads don't waste time shifting from one task to the next
+  val numCores = Runtime.getRuntime.availableProcessors
+
+  print("Passwords: ")
+  // Divide combinations into numCores parts/Futures using striping (slidedeck #11)
+  val futures = for i <- 0 until numCores yield Future {
+    // keep variables local to the Futures they're associated with
+    var numPasswords = 0
+    var cursor = i
+    while cursor < stop do {
+      val password = makeCombination(cursor).mkString
+      if hashes contains sha256(password) then {
+        //print(s"$password, ")
+        println(password)
+        numPasswords += 1
+      }
+      cursor += numCores
+    }
+    numPasswords
+  }
+
+  val totalNumPasswords = futures.map((future: Future[Int]) => Await.result(future, Duration.Inf)).sum
+  //println()
+  totalNumPasswords
 }
 
+def commonWords(charset: String, length: Int, hashes: Set[String]): Int = {
+  // 1. Find a collection of common words in English. Let that be our charset.
+  // 2. Try getCombination(words)(numWords)(BigInt(7)).mkString with numWords = 1 or numWords = 2
+  //
+  0
+}
 
-def bruteForceFutureLoop(charset: String, length: Int, hashes: Set[String]): BigInt = {
-  val start = BigInt(0)
-  val stop = BigInt(charset.length).pow(length)
-  // create a partially applied version of get combination with symbols and length filled in
-  val makeCombination = getCombination(charset)(length)
-  // loop from the first possible password with this charset to the last checking each
-  var cursor = start
+def commonWordsWithVaryingCaps(charset: String, length: Int, hashes: Set[String]): Int = {
+  // 1. Find a collection of common words in English.
+  // 2. For each word, map it to a set containing both itself lowercased and itself 1st-char-capitalized.
+  //    Let the (flattened) collection of maps be our charset
+  // 3. Try getCombination(words)(numWords)(BigInt(7)).mkString with numWords = 1 or numWords = 2...
+  // ...
+  0
+}
 
-  var numPasswords: BigInt = BigInt(0) // I know mutability is dangerous but hopefully this works...
-  def printPasswords(index: BigInt): Unit = {
-    // identify the password that goes with this particular number
-    val password = makeCombination(index).mkString
-    // if this password's hash is in the set, add the password to the output list of passwords
-    if (hashes contains sha256(password)) {
-      numPasswords += 1
-//      print(s"$password, ")
-    }
-  }
+// if we want to be the group that finds the most passwords!
+def commonWordsWithVaryingCapsAndNumericAppended(charset: String, length: Int, hashes: Set[String]): Int = {
+  // Same as commonWordsWithVaryingCaps except add digits (potentially all combinations of the digits) to charset
+  0
+}
 
-  // Construct a queue line for await...The hope is that the futures made first will be the first to be done
-  // kinda like a sliding window I guess
-//  println(stop)
-  val futures = mutable.Queue[Future[Unit]]()
-  val futuresSize = if stop < Int.MaxValue then stop.intValue else Int.MaxValue
-  for i <- 0 until futuresSize do futures.enqueue(Future(printPasswords(i)))
-
-  cursor = futuresSize
-  while futures.nonEmpty do {
-    Await.result(futures.dequeue, Duration.Inf)
-    if cursor < stop then futures.enqueue(Future(printPasswords(cursor)))
-    cursor += 1
-  }
-  println()
-
-  numPasswords
+def commonWordsWithVaryingCapsAndSymbolAppended(charset: String, length: Int, hashes: Set[String]): Int = {
+  // Same as commonWordsWithVaryingCaps except add  symbols to charset
+  0
 }
 
 
